@@ -1,0 +1,14 @@
+# STT
+openai-whisper>=20231117
+
+# 오디오 입출력
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Emotion (Hugging Face)
+transformers>=4.30.0
+torch>=2.0.0
+# PyTorch는 OS/GPU에 맞게 별도 설치 권장: https://pytorch.org/get-started/locally/
+
+# GUI (기본 tkinter 대신 더 깔끔한 UI 원할 때)
+# customtkinter>=5.2.0

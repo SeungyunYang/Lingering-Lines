@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "STT+Emotion (Homebrew Python)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/stt-emotion-proto/app.py",
+      "cwd": "${workspaceFolder}/stt-emotion-proto",
+      "console": "integratedTerminal",
+      "python": "/opt/homebrew/bin/python3"
+    },
+    {
+      "name": "STT+Emotion (Intel Mac Homebrew)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/stt-emotion-proto/app.py",
+      "cwd": "${workspaceFolder}/stt-emotion-proto",
+      "console": "integratedTerminal",
+      "python": "/usr/local/bin/python3"
+    }
+  ]
+}
