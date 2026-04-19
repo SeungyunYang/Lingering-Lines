@@ -71,6 +71,18 @@ python3 rpi-eink-test/emotion_serial_eink.py --serial /dev/ttyUSB0
 
 **시리얼 포트:** `ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null` 또는 `arduino-cli board list` 로 확인. CH340 Nano는 보통 **`/dev/ttyUSB0`**, 다른 보드는 **`/dev/ttyACM0`** 인 경우가 많습니다. 없으면 USB 재연결·케이블·`dialout` 그룹을 확인하세요.
 
+## 부스 스토리 e-ink (`nano_booth_nav.ino`)
+
+스위치만으로 페이지를 넘기는 **별도** 펌웨어·스크립트입니다. `nano_neopixel_switch_test` 대신 `arduino/nano_booth_nav/` 를 업로드한 뒤:
+
+```bash
+export E_PAPER_ROOT="$HOME/e-Paper/RaspberryPi_JetsonNano/python"
+source ~/Lingering-Lines/.venv/bin/activate   # 선택
+python3 ~/Lingering-Lines/rpi-eink-test/booth_nav_eink.py --serial /dev/ttyUSB0
+```
+
+상세 업로드: `arduino/nano_booth_nav/README.md` 참고.
+
 ## 코드에서 바꿀 곳
 
 `typewriter_demo.py` 상단의 **`DEFAULT_MESSAGE`** 문자열을 수정하면 기본 표시 문구가 바뀝니다.
