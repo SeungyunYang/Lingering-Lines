@@ -1,16 +1,16 @@
 /*
  * NeoPixel + 키보드 스위치 테스트
  *
- * - Back(D2) / Next(D5): 0~5 감정 라이트 효과 순환 (이전 / 다음)
+ * - Back(D2) / Next(D5): 0~6 감정 라이트 효과 순환 (이전 / 다음)
  * - Select(D3): 전체 NeoPixel 끄기 ↔ 켜기 토글 (켜져 있을 때만 색 표시)
  *
  * INPUT_PULLUP — 누름 = LOW. 팔레트는 nano_neopixel_emotion_test.ino 와 맞춰 두었음(동기화 유지).
  *
  * 감정 번호 (절대 삭제·축약하지 말 것):
- *   0 = JOY  1 = SADNESS  2 = ANGER  3 = FEAR  4 = SURPRISE  5 = DISGUST
+ *   0 = JOY  1 = SADNESS  2 = ANGER  3 = FEAR  4 = LOVE  5 = DISGUST  6 = NEUTRAL
  *
  * USB 시리얼(115200): 라즈베리파이가 읽어 e-ink 에 표시
- *   EMO:<0-5>  — 감정 변경 시
+ *   EMO:<0-6>  — 감정 변경 시
  *   LED:<0|1> — Select 로 전체 끔(0) / 켬(1) 시
  */
 
@@ -80,7 +80,7 @@ static const SegGrad SADNESS_SEGS[NUM_GROUPS] = {
     {72, 62, 178, 202, 188, 255},
 };
 
-static const SegGrad LOVE_SEGS_RESERVED[NUM_GROUPS] __attribute__((unused)) = {
+static const SegGrad LOVE_SEGS[NUM_GROUPS] = {
     {255, 22, 18, 255, 95, 8},
     {255, 48, 95, 190, 12, 22},
     {255, 105, 12, 255, 125, 118},
@@ -107,7 +107,8 @@ static const SegGrad FEAR_SEGS[NUM_GROUPS] = {
     {98, 96, 108, 72, 70, 88},
 };
 
-static const SegGrad SURPRISE_SEGS[NUM_GROUPS] = {
+// (백업) 예전 SURPRISE 팔레트 — 7감정 매핑에서는 미사용. 삭제 금지.
+static const SegGrad SURPRISE_SEGS_BACKUP[NUM_GROUPS] __attribute__((unused)) = {
     {165, 12, 95, 255, 45, 210},
     {255, 35, 175, 255, 145, 235},
     {95, 8, 72, 255, 65, 225},
@@ -134,13 +135,24 @@ static const SegGrad DISGUST_SEGS[NUM_GROUPS] = {
     {65, 108, 26, 102, 115, 36},
 };
 
-static const SegGrad *const EMOTION_SEGS[6] = {
+// NEUTRAL: 차분한 웜그레이·실버 (채도 낮음, 중립 톤)
+static const SegGrad NEUTRAL_SEGS[NUM_GROUPS] = {
+    {188, 188, 192, 155, 155, 162},
+    {175, 178, 185, 148, 150, 158},
+    {200, 196, 200, 168, 165, 172},
+    {165, 168, 175, 135, 138, 145},
+    {195, 192, 198, 160, 158, 168},
+    {178, 180, 186, 152, 150, 158},
+};
+
+static const SegGrad *const EMOTION_SEGS[7] = {
     JOY_SEGS,
     SADNESS_SEGS,
     ANGER_SEGS,
     FEAR_SEGS,
-    SURPRISE_SEGS,
+    LOVE_SEGS,
     DISGUST_SEGS,
+    NEUTRAL_SEGS,
 };
 
 static uint8_t currentEmotion = 0;
@@ -198,12 +210,12 @@ void loop() {
 
   if (canAct) {
     if (bBack && !prevBack) {
-      currentEmotion = (uint8_t)((currentEmotion + 5) % 6);
+      currentEmotion = (uint8_t)((currentEmotion + 6) % 7);
       lastBtnMs = now;
       Serial.print(F("EMO:"));
       Serial.println(currentEmotion);
     } else if (bNext && !prevNext) {
-      currentEmotion = (uint8_t)((currentEmotion + 1) % 6);
+      currentEmotion = (uint8_t)((currentEmotion + 1) % 7);
       lastBtnMs = now;
       Serial.print(F("EMO:"));
       Serial.println(currentEmotion);

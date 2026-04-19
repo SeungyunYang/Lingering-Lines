@@ -7,7 +7,7 @@
  *
  * NUM_PIXELS 는 GROUP_SIZE 의 배수여야 함 (예: 36 = 6×6그룹).
  *
- * (예비) LOVE 감정용 팔레트는 파일 내 LOVE_SEGS_RESERVED 로 보관함. 매핑 추가 시 사용.
+ * 7감정: LOVE 는 기존 예비 팔레트(LOVE_SEGS), NEUTRAL 은 차분한 그레이 톤.
  */
 
 #include <Adafruit_NeoPixel.h>
@@ -18,8 +18,9 @@
 //   1 = SADNESS (슬픔)
 //   2 = ANGER (분노)
 //   3 = FEAR (두려움)
-//   4 = SURPRISE (놀람)
+//   4 = LOVE (사랑)
 //   5 = DISGUST (혐오)
+//   6 = NEUTRAL (중립)
 #define ACTIVE_EMOTION 0
 
 #define NEOPIXEL_PIN 7
@@ -80,9 +81,8 @@ static const SegGrad SADNESS_SEGS[NUM_GROUPS] = {
     {72, 62, 178, 202, 188, 255},    // [보라↑] 블루바이올렛 → 소프트 라벤더
 };
 
-// ---- LOVE (예비): 6감정 인덱스에는 없음 — 나중에 LOVE 추가 시 이 SegGrad 사용. 삭제 금지 ----
-// 핑크·코랄·따뜻한 레드 (연애 느낌). ACTIVE_EMOTION 과 연결하지 않음; 통합 시 EMOTION_SEGS 에 매핑.
-static const SegGrad LOVE_SEGS_RESERVED[NUM_GROUPS] __attribute__((unused)) = {
+// ---- LOVE: 핑크·코랄·따뜻한 레드 (기존 예비 팔레트 그대로) -------------------------
+static const SegGrad LOVE_SEGS[NUM_GROUPS] = {
     {255, 22, 18, 255, 95, 8},      // 스칼렛 → 선명 주황
     {255, 48, 95, 190, 12, 22},     // 핫 핑크 → 크림슨
     {255, 105, 12, 255, 125, 118},  // 탠저린 → 코랄 핑크
@@ -111,8 +111,8 @@ static const SegGrad FEAR_SEGS[NUM_GROUPS] = {
     {98, 96, 108, 72, 70, 88},       // [회색] 블루그레이 → 거의 검은 회색
 };
 
-// ---- SURPRISE: 다이나믹 핑크·마젠타·푸시아 (구간마다 명암·채도 대비 크게) -----
-static const SegGrad SURPRISE_SEGS[NUM_GROUPS] = {
+// ---- (백업) SURPRISE — 7감정 매핑에서는 미사용. 삭제 금지 -----------------------
+static const SegGrad SURPRISE_SEGS_BACKUP[NUM_GROUPS] __attribute__((unused)) = {
     {165, 12, 95, 255, 45, 210},     // 딥 마젠타 → 네온 핫핑크 번쩍
     {255, 35, 175, 255, 145, 235},   // 선명 푸시아 → 버블검 플래시
     {95, 8, 72, 255, 65, 225},       // 어두운 로즈 → 일렉트릭 핑크
@@ -141,13 +141,24 @@ static const SegGrad DISGUST_SEGS[NUM_GROUPS] = {
     {65, 108, 26, 102, 115, 36},     // 군록 → 어두운 올리브
 };
 
-static const SegGrad *const EMOTION_SEGS[6] = {
+// ---- NEUTRAL: 차분한 웜그레이·실버 (중립) ------------------------------------
+static const SegGrad NEUTRAL_SEGS[NUM_GROUPS] = {
+    {188, 188, 192, 155, 155, 162},
+    {175, 178, 185, 148, 150, 158},
+    {200, 196, 200, 168, 165, 172},
+    {165, 168, 175, 135, 138, 145},
+    {195, 192, 198, 160, 158, 168},
+    {178, 180, 186, 152, 150, 158},
+};
+
+static const SegGrad *const EMOTION_SEGS[7] = {
     JOY_SEGS,
     SADNESS_SEGS,
     ANGER_SEGS,
     FEAR_SEGS,
-    SURPRISE_SEGS,
+    LOVE_SEGS,
     DISGUST_SEGS,
+    NEUTRAL_SEGS,
 };
 
 void setup() {
@@ -157,8 +168,8 @@ void setup() {
 }
 
 void loop() {
-#if ACTIVE_EMOTION < 0 || ACTIVE_EMOTION > 5
-#error "ACTIVE_EMOTION must be 0..5"
+#if ACTIVE_EMOTION < 0 || ACTIVE_EMOTION > 6
+#error "ACTIVE_EMOTION must be 0..6"
 #endif
 
   const SegGrad *segs = EMOTION_SEGS[ACTIVE_EMOTION];

@@ -4,7 +4,7 @@
 Arduino (nano_neopixel_switch_test.ino) USB 시리얼 → 감정 이름을 4.2\" e-ink 에 표시.
 
 아두이노가 보내는 줄:
-  EMO:<0-5>
+  EMO:<0-6>
   LED:<0|1>   (0 = NeoPixel 전체 끔, 1 = 켬)
 
 실행 (Pi에서, Arduino USB 연결 후):
@@ -54,12 +54,12 @@ def setup_waveshare_path() -> None:
     )
 
 
-EMOTION_LABELS = ("JOY", "SADNESS", "ANGER", "FEAR", "SURPRISE", "DISGUST")
+EMOTION_LABELS = ("JOY", "SADNESS", "ANGER", "FEAR", "LOVE", "DISGUST", "NEUTRAL")
 
 # 부분 갱신 횟수 후 전체 갱신 1회(잔상 제거). 시작 시 첫 display는 전체이므로 이후부터 카운트.
 PARTIALS_BEFORE_FULL = 12
 
-EMO_RE = re.compile(r"^EMO:([0-5])\s*$")
+EMO_RE = re.compile(r"^EMO:([0-6])\s*$")
 LED_RE = re.compile(r"^LED:([01])\s*$")
 
 

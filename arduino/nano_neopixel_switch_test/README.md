@@ -4,17 +4,17 @@
 
 | 스위치 | 핀 | 동작 |
 |--------|-----|------|
-| Back | D2 | 감정 **이전** (0←5 순환) |
+| Back | D2 | 감정 **이전** (0←6 순환) |
 | Select | D3 | 전체 NeoPixel **끄기 / 켜기** 토글 |
-| Next | D5 | 감정 **다음** (0→5 순환) |
+| Next | D5 | 감정 **다음** (0→6 순환) |
 
 - `INPUT_PULLUP` — 누르면 LOW, 안 누르면 HIGH.
-- 감정 0~5 색 패턴은 `nano_neopixel_emotion_test.ino` 와 동일하게 맞춰 둠 (수정 시 **두 파일 모두** 동기화 권장).
+- 감정 0~6 색 패턴은 `nano_neopixel_emotion_test.ino` 와 동일하게 맞춰 둠 (수정 시 **두 파일 모두** 동기화 권장).
 - **USB 시리얼 115200**: 감정/LED 상태를 한 줄씩 출력 → 라즈베리파이에서 `rpi-eink-test/emotion_serial_eink.py` 로 e-ink 에 동시 표시 가능.
 
 시리얼 형식:
 
-- `EMO:0` … `EMO:5` — Back/Next 로 감정이 바뀔 때
+- `EMO:0` … `EMO:6` — Back/Next 로 감정이 바뀔 때
 - `LED:0` — Select 로 NeoPixel 전체 끔
 - `LED:1` — Select 로 NeoPixel 켬
 
