@@ -1,0 +1,32 @@
+---
+description: 사용자가 백업·복원·스냅샷을 요청할 때 Lingering-Lines 백업/복원 스크립트 실행
+alwaysApply: true
+---
+
+# Lingering-Lines 백업·복원
+
+## 백업
+
+사용자가 **백업**, **snapshot**, **지금 상태 저장**, **전체 복사해 두기** 등 **프로젝트 전체를 보관**하려는 의도를 말하면:
+
+1. 저장소 루트(이 워크스페이스의 `Lingering-Lines` 최상위)에서 실행한다.
+   - `bash scripts/backup_lingering_lines.sh`
+   - 용량을 줄이려면(venv 제외): `bash scripts/backup_lingering_lines.sh --no-venv`
+2. 출력된 **`.tar.gz` 경로**, **`MANIFEST.txt`**, **`pip-freeze-*.txt`** 위치를 사용자에게 알려준다.
+
+기본 백업 디렉터리는 `~/backups/lingering-lines/snapshot-<타임스탬프>/` 이다. 폴더 이름의 **타임스탬프가 백업 시점**이다. 다른 드라이브에 두려면 `BACKUP_ROOT=/경로 bash scripts/backup_lingering_lines.sh` 를 사용한다.
+
+에이전트는 사용자가 "백업"만 말해도 **직접 터미널에서 스크립트를 실행**하고 결과 경로를 요약한다. 설치 방법만 안내하고 끝내지 않는다.
+
+**참고:** 이 동작은 Cursor 규칙을 따르는 **에이전트가 명령을 실행**하는 방식이다. 채팅에서 에이전트 모드로 요청하면 된다.
+
+## 복원·특정 시점 지정
+
+사용자가 **복원**, **이 백업으로 되돌려**, **스냅샷에서 복구** 등을 요청하면:
+
+1. 시점 확인: `bash scripts/list_backups.sh` 로 스냅샷 목록과 각 `.tar.gz` 전체 경로를 본다. 폴더명 `snapshot-20260419-143022` = **2026년 4월 19일 14시 30분 22초**에 만든 백업.
+2. 사용자가 **날짜/시간**만 말하면(예: "4월 19일 밤에 한 백업") 목록에서 가장 가까운 `snapshot-*` 또는 해당 날짜의 아카이브를 고른다.
+3. 사용자가 **전체 경로**를 주면 그 `.tar.gz`로 복원: `bash scripts/restore_lingering_lines.sh "<아카이브.tar.gz>" [풀 상위 디렉터리]`
+4. 복원 전에 기존 `~/Lingering-Lines` 를 덮어쓰면 안 되므로, 에이전트는 사용자에게 **다른 디렉터리에 풀지**, **기존 폴더 이름 바꾼 뒤 풀지** 확인한다.
+
+`MANIFEST.txt` 안에 해당 백업 시점의 `git` 커밋 해시와 `git status` 요약이 들어 있어, 어떤 코드 상태인지 대조할 수 있다.

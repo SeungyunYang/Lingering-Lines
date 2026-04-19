@@ -46,6 +46,31 @@
 
 5. **Pi 5**: Waveshare 저장소의 `epdconfig`가 Pi 5 / 새 커널에서 동작하는지 확인하세요. 문제가 있으면 Waveshare GitHub 이슈·위키를 참고합니다.
 
+## Arduino 스위치 → e-ink 감정 표시
+
+`nano_neopixel_switch_test.ino` 를 Nano에 올린 뒤, USB로 Pi와 연결하면 시리얼로 `EMO:` / `LED:` 줄이 나옵니다. 이를 받아 화면에 `JOY`, `SADNESS` … 를 띄우려면:
+
+**의존성 (택 1)**
+
+- **가상환경 (PEP 668 회피 — 권장):**
+  ```bash
+  cd ~/Lingering-Lines
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r rpi-eink-test/requirements.txt
+  ```
+- **또는 apt:** `sudo apt install python3-serial python3-pil` (시스템 `python3`로 실행)
+
+**실행** (시리얼 포트는 보드마다 다름 — 아래 참고):
+
+```bash
+export E_PAPER_ROOT="$HOME/e-Paper/RaspberryPi_JetsonNano/python"
+# venv 썼으면: source ~/Lingering-Lines/.venv/bin/activate
+python3 rpi-eink-test/emotion_serial_eink.py --serial /dev/ttyUSB0
+```
+
+**시리얼 포트:** `ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null` 또는 `arduino-cli board list` 로 확인. CH340 Nano는 보통 **`/dev/ttyUSB0`**, 다른 보드는 **`/dev/ttyACM0`** 인 경우가 많습니다. 없으면 USB 재연결·케이블·`dialout` 그룹을 확인하세요.
+
 ## 코드에서 바꿀 곳
 
 `typewriter_demo.py` 상단의 **`DEFAULT_MESSAGE`** 문자열을 수정하면 기본 표시 문구가 바뀝니다.

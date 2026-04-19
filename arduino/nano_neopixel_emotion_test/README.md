@@ -2,7 +2,7 @@
 
 ## 목적
 
-전체 인터랙션 전에 **NeoPixel만** 연결해 두고, 감정별 색상(같은 계열 안에서 오로라 그라데이션)이 의도대로 나오는지 확인합니다.
+전체 인터랙션 전에 **NeoPixel만** 연결해 두고, **6개 픽셀마다 한 그룹**으로 나눠 그룹마다 (시작색→끝색) 그라데이션을 넣습니다. **숨쉬기**는 `millis()`로 그룹 **내부** 보간만 살짝 움직이며, 불이 스트립 전체 길이를 따라 흘러가지는 않습니다.
 
 ## 하드웨어 (요약)
 
@@ -20,14 +20,18 @@
 
 | 값 | 감정     | 느낌 (팔레트)   |
 |----|----------|-----------------|
-| 0  | JOY      | 노랑–주황 계열 |
+| 0  | JOY      | 6구간 노랑·주황·연두빛 조합 (코드 `JOY_SEGS` 참고) |
 | 1  | SADNESS  | 파랑 계열      |
 | 2  | ANGER    | 빨강 계열      |
 | 3  | FEAR     | 보라/짙은 계열 |
-| 4  | SURPRISE | 핑크/마젠타    |
-| 5  | DISGUST  | 녹색/올리브    |
+| 4  | SURPRISE | 다이나믹 핑크·마젠타·푸시아 |
+| 5  | DISGUST  | 올리브·역녹 (채도 있음, 푸른빛 없음) |
 
 숫자만 바꿔서 업로드할 때마다 한 가지 감정만 테스트합니다.
+
+- `NUM_PIXELS`는 **`GROUP_SIZE`(6)의 배수**여야 합니다 (예: 36).
+- 그룹별 시작/끝 RGB는 감정마다 `*_SEGS` 배열에서 수정합니다.
+- 숨쉬기: `BREATH_SPEED`(속도), `BREATH_AMP`(큰 물결), `BREATH_SHIMMER_AMP` / `BREATH_SHIMMER_MULT`(그룹 안 빠른 잔물결).
 
 ## 라이브러리
 
@@ -39,9 +43,19 @@ Pi에 SSH 접속한 뒤:
 
 ### 1) arduino-cli 설치 (한 번)
 
+**현재 디렉터리**에서 `install.sh`를 실행하면 바이너리가 `./bin`(예: `~/Lingering-Lines/bin`)에 들어갑니다. `PATH`에 그 경로를 넣거나, 아래처럼 **설치 위치를 고정**하세요.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+mkdir -p "$HOME/bin"
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR="$HOME/bin" sh
 export PATH="$PATH:$HOME/bin"
+arduino-cli version
+```
+
+이미 repo 루트 등에 설치-only 된 경우:
+
+```bash
+export PATH="$PATH:$HOME/Lingering-Lines/bin"   # 경로는 설치 로그의 "installed successfully in ..." 와 동일하게
 arduino-cli version
 ```
 
