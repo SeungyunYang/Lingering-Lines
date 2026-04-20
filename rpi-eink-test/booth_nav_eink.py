@@ -4,7 +4,8 @@
 부스 스토리 e-ink 네비게이션 (Arduino nano_booth_nav.ino 와 짝).
 
 스위치 → 시리얼: BTN:BACK / BTN:OK / BTN:NEXT
-Pi → Arduino: PLAY:<0-6> (Bring 페이지 5초 후 15초 네오; 난수는 Pi 에서 균등 선택)
+Pi → Arduino: NEO:WHITE_BREATH / NEO:WHITE_MED / NEO:LOADING / NEO:FADEOUT / NEO:THANKS / NEO:OFF,
+  PLAY:<0-6> (Bring 5초 후 15초 감정 네오; 난수는 Pi 에서 균등 선택)
 
 실행:
   export E_PAPER_ROOT=\"$HOME/e-Paper/RaspberryPi_JetsonNano/python\"
@@ -29,7 +30,11 @@ from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 BOOTH_FONT_SIZE = 20
 BOOTH_LINE_SPACING = 8
 
-# "select로 말하기 준비" 페이지에서 OK 후 흰 화면 유지(초)
+# I_FOLLOW(6)에서 OK 후 Neo 페이드아웃이 끝날 때까지 대기(Arduino FADEOUT_MS 와 맞춤)
+FADEOUT_S = 1.85
+# I_SAY 에서 NEO:WHITE_MED_RAMP 후 고정 WHITE_MED 로 넘기는 시각(Arduino WHITEMED_RAMP_MS 와 동기)
+WHITEMED_RAMP_S = 2.6
+# I_READY_SPEAK 에서 첫 Select 후 흰 화면 유지 시간(초), 이후 I_PRESS_FINISH 로 자동 전환
 READY_WHITE_HOLD_S = 5.0
 
 # e-ink: 전체 갱신은 (1) 최초 시작 시 한 번 (2) 마지막 페이지 10초 후 첫 페이지로 복귀할 때만.
@@ -71,6 +76,7 @@ PAGES: list[str] = [
 I_FOLLOW = 6
 I_BRING = 7
 I_NOW = 8
+I_SAY = 9
 I_READY_SPEAK = 12
 I_PRESS_FINISH = 13
 I_PLACE = 14
@@ -215,6 +221,10 @@ class BoothState:
         "p7_neo_sent",
         "p7_jump_scheduled",
         "thanks_until",
+        "neo_fade_until",
+        "ready_loading",
+        "last_neo_line",
+        "say_ramp_t0",
         "after_ready_white_until",
     )
 
@@ -224,6 +234,10 @@ class BoothState:
         self.p7_neo_sent = False
         self.p7_jump_scheduled = False
         self.thanks_until: float | None = None
+        self.neo_fade_until: float | None = None
+        self.ready_loading = False
+        self.last_neo_line = ""
+        self.say_ramp_t0: float | None = None
         self.after_ready_white_until: float | None = None
 
     def reset_loop(self) -> None:
@@ -232,7 +246,54 @@ class BoothState:
         self.p7_neo_sent = False
         self.p7_jump_scheduled = False
         self.thanks_until = None
+        self.neo_fade_until = None
+        self.ready_loading = False
+        self.last_neo_line = ""
+        self.say_ramp_t0 = None
         self.after_ready_white_until = None
+
+
+def neo_line_for_state(st: BoothState) -> str | None:
+    """Arduino NEO:/PLAY: 한 줄. None 이면 전송 생략(페이드·감정 재생 중 등)."""
+    if st.neo_fade_until is not None:
+        return None
+    if st.after_ready_white_until is not None:
+        return None
+    p = st.page
+    if p <= I_FOLLOW:
+        return "NEO:WHITE_BREATH"
+    if p == I_BRING:
+        return None
+    if p == I_NOW:
+        return "NEO:OFF"
+    if p == I_SAY:
+        if st.say_ramp_t0 is not None and (time.monotonic() - st.say_ramp_t0) < WHITEMED_RAMP_S:
+            return "NEO:WHITE_MED_RAMP"
+        return "NEO:WHITE_MED"
+    if I_SAY < p <= I_READY_SPEAK:
+        if p == I_READY_SPEAK and st.ready_loading:
+            return "NEO:LOADING"
+        return "NEO:WHITE_MED"
+    if p == I_PRESS_FINISH:
+        return "NEO:LOADING"
+    if p == I_PLACE:
+        return "NEO:OFF"
+    if I_PLACE < p < I_THANKS:
+        return "NEO:WHITE_BREATH"
+    if p == I_THANKS:
+        return "NEO:THANKS"
+    return None
+
+
+def sync_neo(ser, st: BoothState, *, force: bool = False) -> None:
+    line = neo_line_for_state(st)
+    if line is None:
+        return
+    if not force and line == st.last_neo_line:
+        return
+    ser.write((line + "\n").encode())
+    ser.flush()
+    st.last_neo_line = line
 
 
 def show_partial(epd, buf) -> None:
@@ -240,9 +301,13 @@ def show_partial(epd, buf) -> None:
 
 
 def handle_back(st: BoothState) -> bool:
+    p = st.page
     if st.after_ready_white_until is not None:
         return False
-    p = st.page
+    if st.neo_fade_until is not None and p == I_FOLLOW:
+        st.neo_fade_until = None
+        st.page = max(0, p - 1)
+        return True
     if p == I_THANKS:
         return False
     if p <= I_FOLLOW:
@@ -253,6 +318,9 @@ def handle_back(st: BoothState) -> bool:
     if p == I_NOW:
         return False
     if I_NOW < p <= I_READY_SPEAK:
+        if p == I_READY_SPEAK:
+            st.ready_loading = False
+            st.after_ready_white_until = None
         st.page = max(I_NOW, p - 1)
         return True
     if p == I_PRESS_FINISH:
@@ -266,9 +334,9 @@ def handle_back(st: BoothState) -> bool:
 
 
 def handle_next(st: BoothState) -> bool:
+    p = st.page
     if st.after_ready_white_until is not None:
         return False
-    p = st.page
     if p == I_THANKS:
         return False
     if p == I_FOLLOW:
@@ -283,27 +351,39 @@ def handle_next(st: BoothState) -> bool:
         st.page = p + 1
         if st.page == I_THANKS:
             st.thanks_until = time.monotonic() + 10.0
+        if st.page == I_READY_SPEAK:
+            st.ready_loading = False
+            st.last_neo_line = ""
         return True
     return False
 
 
-def handle_ok(st: BoothState) -> bool:
-    if st.after_ready_white_until is not None:
-        return False
+def handle_ok(st: BoothState, ser) -> bool:
     p = st.page
     if p == I_THANKS:
         return False
     if p == I_FOLLOW:
-        st.page = I_BRING
-        st.p7_t0 = time.monotonic()
-        st.p7_neo_sent = False
-        st.p7_jump_scheduled = False
+        ser.write(b"NEO:FADEOUT\n")
+        ser.flush()
+        st.last_neo_line = "NEO:FADEOUT"
+        st.neo_fade_until = time.monotonic() + FADEOUT_S
         return True
     if p == I_READY_SPEAK:
+        if st.after_ready_white_until is not None:
+            return False
+        if st.ready_loading:
+            return False
+        st.ready_loading = True
         st.after_ready_white_until = time.monotonic() + READY_WHITE_HOLD_S
+        ser.write(b"NEO:LOADING\n")
+        ser.flush()
+        st.last_neo_line = "NEO:LOADING"
         return True
     if p == I_PRESS_FINISH:
         st.page = I_PLACE
+        ser.write(b"NEO:OFF\n")
+        ser.flush()
+        st.last_neo_line = "NEO:OFF"
         return True
     return False
 
@@ -321,6 +401,7 @@ def tick_page7(st: BoothState, ser) -> bool:
         emo_i = secrets.randbelow(7)
         ser.write(f"PLAY:{emo_i}\n".encode())
         ser.flush()
+        st.last_neo_line = f"PLAY:{emo_i}"
         st.p7_neo_sent = True
     if st.p7_neo_sent and not st.p7_jump_scheduled and dt >= _bring_delay_s + _neo_duration_s:
         st.page = I_NOW
@@ -369,19 +450,26 @@ def main() -> int:
     time.sleep(0.4)
 
     def draw() -> None:
-        if (
-            st.after_ready_white_until is not None
-            and time.monotonic() < st.after_ready_white_until
-        ):
+        if st.page == I_SAY:
+            if st.say_ramp_t0 is None:
+                st.say_ramp_t0 = time.monotonic()
+        elif st.say_ramp_t0 is not None:
+            st.say_ramp_t0 = None
+        if st.page == I_READY_SPEAK and not st.ready_loading and st.last_neo_line == "NEO:LOADING":
+            st.last_neo_line = ""
+        if st.after_ready_white_until is not None and time.monotonic() < st.after_ready_white_until:
+            sync_neo(ser, st)
             blank = Image.new("1", (epd.width, epd.height), 255)
             buf = epd.getbuffer(blank)
             show_partial(epd, buf)
             return
+        sync_neo(ser, st)
         buf = epd.getbuffer(render_screen(epd.width, epd.height, PAGES[st.page]))
         show_partial(epd, buf)
 
     buf_first = epd.getbuffer(render_screen(epd.width, epd.height, PAGES[st.page]))
     epd.display(buf_first)
+    sync_neo(ser, st, force=True)
     print(f"부스 UI 시작 ({args.serial}). Ctrl+C 종료", flush=True)
 
     try:
@@ -394,22 +482,38 @@ def main() -> int:
                     time.sleep(0.3)
                     buf0 = epd.getbuffer(render_screen(epd.width, epd.height, PAGES[0]))
                     epd.display(buf0)
+                    sync_neo(ser, st, force=True)
                     if args.debug:
                         print("[booth] 루프 초기화 → 페이지 0", flush=True)
                     continue
 
-            if st.after_ready_white_until is not None and time.monotonic() >= st.after_ready_white_until:
-                st.page = I_PRESS_FINISH
+            now_mono = time.monotonic()
+            if (
+                st.page == I_SAY
+                and st.say_ramp_t0 is not None
+                and (now_mono - st.say_ramp_t0) >= WHITEMED_RAMP_S
+                and st.last_neo_line == "NEO:WHITE_MED_RAMP"
+            ):
+                draw()
+
+            if st.after_ready_white_until is not None and now_mono >= st.after_ready_white_until:
                 st.after_ready_white_until = None
+                st.page = I_PRESS_FINISH
+                st.ready_loading = False
+                draw()
+                continue
+
+            if st.neo_fade_until is not None and now_mono >= st.neo_fade_until:
+                st.page = I_BRING
+                st.p7_t0 = now_mono
+                st.p7_neo_sent = False
+                st.p7_jump_scheduled = False
+                st.neo_fade_until = None
                 draw()
                 continue
 
             if tick_page7(st, ser):
                 draw()
-                continue
-
-            if st.after_ready_white_until is not None:
-                time.sleep(0.03)
                 continue
 
             line = ser.readline()
@@ -429,7 +533,7 @@ def main() -> int:
             if BTN_BACK.match(s):
                 acted = handle_back(st)
             elif BTN_OK.match(s):
-                acted = handle_ok(st)
+                acted = handle_ok(st, ser)
             elif BTN_NEXT.match(s):
                 acted = handle_next(st)
 

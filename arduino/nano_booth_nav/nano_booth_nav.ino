@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include <Wire.h>
 #include <Adafruit_DRV2605.h>
 
@@ -15,10 +16,17 @@
  *   ROM 라이브러리 1 + ERM 가정. 진동이 약하면 useLRA() 로 바꿔 시험.
  *
  * Pi → 보드 (115200, 줄 단위):
- *   PLAY:RANDOM     — 7감정 중 하나 랜덤, 15초간 숨쉬기 후 소등
- *   PLAY:<0-6>      — 해당 감정 15초 재생 후 소등
+ *   NEO:WHITE_BREATH — 전체 흰색 균일 숨쉬기(디밍)
+ *   NEO:WHITE_MED    — 중간 밝기 흰색 고정
+ *   NEO:WHITE_MED_RAMP — 꺼짐(0)에서 WHITE_MED 까지 서서히 켜짐(~2.6s), 끝나면 WHITE_MED 유지
+ *   NEO:LOADING      — 12시·6시 두 보랏빛 광이 부드럽게 번지며 연속 회전(풍차)
+ *   NEO:FADEOUT      — 흰색 → 꺼짐(페이드, ~1.8s)
+ *   NEO:THANKS       — 밝은 흰색에서 천천히 꺼짐(~5s)
+ *   NEO:OFF          — 즉시 소등
+ *   PLAY:RANDOM      — 7감정 중 하나 랜덤, 15초간 감정 숨쉬기 후 소등
+ *   PLAY:<0-6>       — 해당 감정 15초 재생 후 소등
  *
- * NeoPixel 재생 중: DRV2605 ROM 웨이폼 HAPTIC_WAVEFORM 번호를 재생 끝날 때마다 반복(GO=0 일 때 재트리거)
+ * 감정 Neo 재생 중: DRV2605 ROM 웨이폼 HAPTIC_WAVEFORM 을 끝날 때마다 반복
  *
  * 보드 → Pi:
  *   BTN:BACK / BTN:OK / BTN:NEXT  — 스위치 에지(쿨다운 220ms)
@@ -47,15 +55,40 @@
 #define BTN_COOLDOWN_MS 220U
 #define NEO_PLAY_MS 15000U
 
+#define FADEOUT_MS 1800U
+#define THANKS_FADE_MS 5000U
+#define WHITEMED_RAMP_MS 2600U
+#define WHITE_MED_BR 112U
+/* 로딩: 한 팔이 한 바퀴 도는 데 걸리는 시간(마이크로초). 클수록 느림 */
+#define LOADING_ROT_PERIOD_US 22500000UL
+/* 각도 감쇠(라디안). 작을수록 켜지는 픽셀 수 줄어듦 */
+#define LOADING_GLOW_SIGMA 0.25f
+
 #if (NUM_PIXELS % GROUP_SIZE) != 0
 #error "NUM_PIXELS must be a multiple of GROUP_SIZE"
 #endif
 
 #define NUM_GROUPS (NUM_PIXELS / GROUP_SIZE)
 
+typedef enum {
+  NEO_MODE_OFF = 0,
+  NEO_MODE_WHITE_BREATH,
+  NEO_MODE_WHITE_MED,
+  NEO_MODE_WHITE_MED_RAMP,
+  NEO_MODE_LOADING,
+  NEO_MODE_EMOTION,
+  NEO_MODE_FADEOUT,
+  NEO_MODE_THANKS_FADE,
+} NeoMode;
+
 Adafruit_NeoPixel strip(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_DRV2605 drv;
 static bool drv2605Ok = false;
+
+static NeoMode neoMode = NEO_MODE_WHITE_BREATH;
+static unsigned long fadeStartMs = 0;
+/* 흰 숨쉬기: 목표 밝기 대칭 저역(올림·내림 동일), 모드 진입 시 -1 로 리셋 */
+static float breathW = -1.0f;
 
 typedef struct {
   uint8_t rs, gs, bs;
@@ -151,7 +184,7 @@ static bool neoPlaying = false;
 static uint32_t neoEndMs = 0;
 static uint8_t neoEmotion = 0;
 
-static char rxBuf[40];
+static char rxBuf[64];
 static uint8_t rxLen = 0;
 
 static bool readPressed(uint8_t pin) {
@@ -180,6 +213,151 @@ static void drawNeoFrame(uint8_t emo) {
     uint8_t r, gc, b;
     lerpRgb(&segs[g], uu, &r, &gc, &b);
     strip.setPixelColor(i, r, gc, b);
+  }
+  strip.show();
+}
+
+static void clearStrip(void) {
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, 0, 0, 0);
+  }
+  strip.show();
+}
+
+static void setNeoMode(NeoMode m) {
+  NeoMode prev = neoMode;
+  if (m != NEO_MODE_EMOTION) {
+    neoPlaying = false;
+    hapticStop();
+  }
+  neoMode = m;
+  if (m == NEO_MODE_WHITE_BREATH && prev != NEO_MODE_WHITE_BREATH) {
+    breathW = -1.0f;
+  }
+  if (m == NEO_MODE_FADEOUT || m == NEO_MODE_THANKS_FADE || m == NEO_MODE_WHITE_MED_RAMP) {
+    fadeStartMs = millis();
+  }
+}
+
+static void drawWhiteBreath(void) {
+  /* sin → kMin~kMax 선형; 대칭 저역 + 짧은 delay 로 8비트 단계 체감 완화 */
+  const float kMin = 60.0f;
+  const float kMax = 190.0f;
+  float phase = (float)micros() * 1.08e-6f;
+  float u = sinf(phase) * 0.5f + 0.5f;
+  float target = kMin + u * (kMax - kMin);
+  if (breathW < 0.0f) {
+    breathW = target;
+  } else {
+    const float a = 0.26f;
+    breathW += a * (target - breathW);
+  }
+  uint8_t b = (uint8_t)(breathW + 0.5f);
+  uint32_t c = strip.Color(b, b, b);
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, c);
+  }
+  strip.show();
+}
+
+static void drawWhiteMed(void) {
+  uint8_t b = WHITE_MED_BR;
+  uint32_t c = strip.Color(b, b, b);
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, c);
+  }
+  strip.show();
+}
+
+static void tickWhiteMedRamp(void) {
+  unsigned long elapsed = millis() - fadeStartMs;
+  if (elapsed >= WHITEMED_RAMP_MS) {
+    neoMode = NEO_MODE_WHITE_MED;
+    drawWhiteMed();
+    return;
+  }
+  float t = (float)elapsed / (float)WHITEMED_RAMP_MS;
+  t = t * t * (3.0f - 2.0f * t);
+  uint8_t b = (uint8_t)((float)WHITE_MED_BR * t + 0.5f);
+  uint32_t c = strip.Color(b, b, b);
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, c);
+  }
+  strip.show();
+}
+
+static float loadingAngleDistMag(float ang, float center) {
+  const float PI_F = 3.14159265f;
+  float d = ang - center;
+  while (d > PI_F) {
+    d -= 2.0f * PI_F;
+  }
+  while (d < -PI_F) {
+    d += 2.0f * PI_F;
+  }
+  return fabsf(d);
+}
+
+static void drawLoading(void) {
+  const float PI_F = 3.14159265f;
+  const uint16_t n = NUM_PIXELS;
+  const float invN = 2.0f * PI_F / (float)n;
+  const float omega = (2.0f * PI_F) / (float)LOADING_ROT_PERIOD_US;
+  float theta = (float)micros() * omega;
+  float thetaOpp = theta + PI_F;
+
+  const float sig = LOADING_GLOW_SIGMA;
+  const float inv2sig2 = 1.0f / (2.0f * sig * sig);
+
+  const uint8_t vr = 140U;
+  const uint8_t vg = 55U;
+  const uint8_t vb = 210U;
+
+  for (uint16_t i = 0; i < n; i++) {
+    float ang = invN * (float)i;
+    float ad1 = loadingAngleDistMag(ang, theta);
+    float ad2 = loadingAngleDistMag(ang, thetaOpp);
+    float g1 = expf(-(ad1 * ad1) * inv2sig2);
+    float g2 = expf(-(ad2 * ad2) * inv2sig2);
+    float m = g1 > g2 ? g1 : g2;
+    uint8_t rr = (uint8_t)((float)vr * m + 0.5f);
+    uint8_t gg = (uint8_t)((float)vg * m + 0.5f);
+    uint8_t bb = (uint8_t)((float)vb * m + 0.5f);
+    strip.setPixelColor(i, rr, gg, bb);
+  }
+  strip.show();
+}
+
+static void tickFadeOut(void) {
+  unsigned long elapsed = millis() - fadeStartMs;
+  if (elapsed >= FADEOUT_MS) {
+    clearStrip();
+    setNeoMode(NEO_MODE_OFF);
+    return;
+  }
+  float u = 1.0f - (float)elapsed / (float)FADEOUT_MS;
+  uint8_t b = (uint8_t)(128.0f * u);
+  uint32_t c = strip.Color(b, b, b);
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, c);
+  }
+  strip.show();
+}
+
+static void tickThanksFade(void) {
+  unsigned long elapsed = millis() - fadeStartMs;
+  if (elapsed >= THANKS_FADE_MS) {
+    clearStrip();
+    setNeoMode(NEO_MODE_OFF);
+    return;
+  }
+  float t = (float)elapsed / (float)THANKS_FADE_MS;
+  float u = 1.0f - t;
+  u = u * u;
+  uint8_t b = (uint8_t)(218.0f * u);
+  uint32_t c = strip.Color(b, b, b);
+  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
+    strip.setPixelColor(i, c);
   }
   strip.show();
 }
@@ -223,20 +401,47 @@ static void hapticLoopWhileNeo(void) {
 static void stopNeo() {
   neoPlaying = false;
   hapticStop();
-  for (uint16_t i = 0; i < NUM_PIXELS; i++) {
-    strip.setPixelColor(i, 0, 0, 0);
-  }
-  strip.show();
+  clearStrip();
+  setNeoMode(NEO_MODE_OFF);
 }
 
 static void startNeo(uint8_t emo) {
   neoEmotion = emo;
   neoPlaying = true;
   neoEndMs = millis() + NEO_PLAY_MS;
+  neoMode = NEO_MODE_EMOTION;
   hapticTriggerWave88();
 }
 
 static void processLine(const char *line) {
+  if (strcmp(line, "NEO:WHITE_BREATH") == 0) {
+    setNeoMode(NEO_MODE_WHITE_BREATH);
+    return;
+  }
+  if (strcmp(line, "NEO:WHITE_MED") == 0) {
+    setNeoMode(NEO_MODE_WHITE_MED);
+    return;
+  }
+  if (strcmp(line, "NEO:WHITE_MED_RAMP") == 0) {
+    setNeoMode(NEO_MODE_WHITE_MED_RAMP);
+    return;
+  }
+  if (strcmp(line, "NEO:LOADING") == 0) {
+    setNeoMode(NEO_MODE_LOADING);
+    return;
+  }
+  if (strcmp(line, "NEO:FADEOUT") == 0) {
+    setNeoMode(NEO_MODE_FADEOUT);
+    return;
+  }
+  if (strcmp(line, "NEO:THANKS") == 0) {
+    setNeoMode(NEO_MODE_THANKS_FADE);
+    return;
+  }
+  if (strcmp(line, "NEO:OFF") == 0) {
+    stopNeo();
+    return;
+  }
   /* 하드웨어 확인: 짧은 클릭(1)과 ROM 웨이폼 88 각각 한 번 재생. 코인 모터가 LRA면 useLRA()+selectLibrary(6) 필요 */
   if (strncmp(line, "TEST:HAPTIC", 12) == 0) {
     if (drv2605Ok) {
@@ -275,7 +480,7 @@ static void pollSerial() {
       rxLen = 0;
       continue;
     }
-    if (rxLen < sizeof(rxBuf) - 1) {
+    if (rxLen < sizeof(rxBuf) - 1U) {
       rxBuf[rxLen++] = c;
     } else {
       rxLen = 0;
@@ -302,8 +507,7 @@ void setup() {
 
   strip.begin();
   strip.setBrightness(BRIGHTNESS_MAX);
-  strip.clear();
-  strip.show();
+  neoMode = NEO_MODE_WHITE_BREATH;
 }
 
 void loop() {
@@ -338,7 +542,7 @@ void loop() {
   prevOk = bOk;
   prevNext = bNext;
 
-  if (neoPlaying) {
+  if (neoMode == NEO_MODE_EMOTION && neoPlaying) {
     if (now >= neoEndMs) {
       stopNeo();
     } else {
@@ -347,6 +551,36 @@ void loop() {
       delay(16);
       return;
     }
+  }
+
+  switch (neoMode) {
+    case NEO_MODE_WHITE_BREATH:
+      drawWhiteBreath();
+      delay(2);
+      return;
+    case NEO_MODE_WHITE_MED:
+      drawWhiteMed();
+      delay(16);
+      return;
+    case NEO_MODE_WHITE_MED_RAMP:
+      tickWhiteMedRamp();
+      delay(12);
+      return;
+    case NEO_MODE_LOADING:
+      drawLoading();
+      delay(22);
+      return;
+    case NEO_MODE_FADEOUT:
+      tickFadeOut();
+      delay(12);
+      return;
+    case NEO_MODE_THANKS_FADE:
+      tickThanksFade();
+      delay(14);
+      return;
+    case NEO_MODE_OFF:
+    default:
+      break;
   }
 
   delay(4);
