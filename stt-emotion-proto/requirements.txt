@@ -5,6 +5,15 @@ openai-whisper>=20231117
 sounddevice>=0.4.6
 numpy>=1.24.0
 
+# 웹 테스트 서버
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+pyserial>=3.5
+
+# OpenAI LLM (종료 후 7감정 분류)
+openai>=1.51.0
+
 # Emotion (Hugging Face)
 transformers>=4.30.0
 torch>=2.0.0

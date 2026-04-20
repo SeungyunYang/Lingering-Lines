@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whisper STT + Emotion Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; max-width: 900px; }
+    h1 { margin-bottom: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    button { padding: 10px 14px; font-size: 15px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin-top: 14px; }
+    .muted { color: #666; font-size: 14px; }
+    #transcript { min-height: 180px; white-space: pre-wrap; line-height: 1.45; }
+    #emotion { font-size: 24px; font-weight: 700; color: #4326a8; }
+    .ok { color: #007a3d; }
+    .warn { color: #a35a00; }
+    .err { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>마이크 + Whisper + 감정 분류 테스트</h1>
+  <div id="serverHint" class="muted" style="margin-bottom:12px;padding:10px;background:#f6f4ff;border-radius:8px;border:1px solid #e0d8ff;">
+    STT 서버 정보를 불러오는 중…
+  </div>
+  <div class="muted">순서: 녹음 위치 선택 → (선택) 장치 조회 → 녹음 시작 → 말하기 → 녹음 종료</div>
+
+  <div class="card">
+    <h3>1) 마이크 인식 점검</h3>
+    <p class="muted" style="margin-top:0;">
+      <strong>중요:</strong> 아래 목록 중 <em>불릿 목록</em>은 STT 서버(보통 라즈베리파이)에 연결된 장치입니다.
+      맥/다른 PC 브라우저로 접속하면 &quot;브라우저 마이크&quot;는 그 컴퓨터 것만 보이므로, USB 마이크가 Pi에 꽂혀 있으면 2번 카드에서 <strong>서버에서 녹음</strong>을 고르세요.
+    </p>
+    <div class="row">
+      <button id="btnBrowserMic">브라우저 마이크 권한 테스트</button>
+      <button id="btnServerMic">STT 서버 입력 장치 조회</button>
+    </div>
+    <div class="row" style="align-items:center; gap:12px;">
+      <label for="serverDeviceSelect" class="muted">서버 녹음 시 사용할 입력:</label>
+      <select id="serverDeviceSelect" style="min-width:280px;padding:8px;font-size:14px;">
+        <option value="">자동 · 이름에 lavalier 우선</option>
+      </select>
+    </div>
+    <div id="micStatus" class="muted">대기 중</div>
+    <div id="selectedMic" class="muted">사용 고정 마이크: (미확인)</div>
+    <ul id="deviceList"></ul>
+  </div>
+
+  <div class="card">
+    <h3>2) STT 테스트</h3>
+    <div class="row" style="flex-direction:column; align-items:flex-start;">
+      <label class="muted" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="radio" name="recMode" value="server" checked />
+        <span><strong>서버에서 녹음</strong> — STT 서버(Pi)에 꽂은 USB 마이크. 맥에서 <code>localhost:8010</code>으로 열어도 Pi 마이크가 녹음됩니다.</span>
+      </label>
+      <label class="muted" style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:6px;">
+        <input type="radio" name="recMode" value="browser" />
+        <span><strong>브라우저에서 녹음</strong> — 지금 이 탭을 연 기기(맥/폰)의 마이크만 사용합니다.</span>
+      </label>
+    </div>
+    <div class="row">
+      <button id="btnStart">녹음 시작</button>
+      <button id="btnStop" disabled>녹음 종료 + 감정 분류</button>
+    </div>
+    <div id="recStatus" class="muted">대기 중</div>
+    <div id="transcript"></div>
+  </div>
+
+  <div class="card">
+    <h3>3) 7감정 분류 결과</h3>
+    <div class="muted">라벨: joy, sadness, anger, fear, love, disgust, neutral</div>
+    <div id="emotion">-</div>
+    <div id="neoStatus" class="muted" style="margin-top:8px;"></div>
+  </div>
+
+  <script>
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let sessionId = null;
+    let isStopping = false;
+    let recordedChunks = [];
+    let recorderMime = "audio/webm";
+    let forcedMicDeviceId = null;
+    function getRecMode() {
+      const el = document.querySelector('input[name="recMode"]:checked');
+      return el ? el.value : "server";
+    }
+
+    async function loadServerHint() {
+      try {
+        const res = await fetch("/api/server-info");
+        const d = await res.json();
+        if (!d.ok) throw new Error("no ok");
+        const ar = d.arduino_neo_enabled
+          ? `네오 연동: ${d.arduino_serial} (감정 분류 후 PLAY:0–6 전송)`
+          : "네오 연동: 꺼짐 (ARDUINO_NEO=0)";
+        serverHint.textContent =
+          `STT 서버 호스트: ${d.hostname}. ${ar} ` +
+          `맥 등에서 열면 「브라우저 마이크」는 그 기기 것만 보입니다. Pi USB 마이크는 「서버에서 녹음」을 쓰세요.`;
+        serverHint.className = "ok";
+        serverHint.style.borderColor = "#c8e6c9";
+        serverHint.style.background = "#f1f8f4";
+      } catch (_) {
+        serverHint.textContent =
+          "STT 서버 정보를 가져오지 못했습니다. 같은 주소에서 서버가 떠 있는지 확인하세요.";
+        serverHint.className = "warn";
+      }
+    }
+
+    /* 서버(sounddevice/ALSA) 이름과 브라우저(PipeWire·Pulse) 노출 이름이 달 수 있음 → 여러 힌트 + 대소문자 무시 */
+    const MIC_LABEL_HINTS = [
+      "usb lavalier microphone",
+      "lavalier microphone",
+      "lavalier",
+    ];
+
+    const serverHint = document.getElementById("serverHint");
+    const serverDeviceSelect = document.getElementById("serverDeviceSelect");
+    const btnBrowserMic = document.getElementById("btnBrowserMic");
+    const btnServerMic = document.getElementById("btnServerMic");
+    const btnStart = document.getElementById("btnStart");
+    const btnStop = document.getElementById("btnStop");
+    const micStatus = document.getElementById("micStatus");
+    const deviceList = document.getElementById("deviceList");
+    const recStatus = document.getElementById("recStatus");
+    const transcript = document.getElementById("transcript");
+    const emotion = document.getElementById("emotion");
+    const neoStatus = document.getElementById("neoStatus");
+    const selectedMic = document.getElementById("selectedMic");
+
+    function applyEmotionNeoResponse(data) {
+      emotion.textContent = data.emotion || "-";
+      if (data.neo_ok === true) {
+        setText(neoStatus, `Arduino 네오픽셀: PLAY:${data.neo_index} 전송 (${data.emotion})`, "ok");
+      } else if (data.neo_message) {
+        const soft = data.neo_message.includes("생략") || data.neo_message.includes("비활성");
+        setText(neoStatus, `Arduino: ${data.neo_message}`, soft ? "muted" : "warn");
+      } else {
+        neoStatus.textContent = "";
+        neoStatus.className = "muted";
+      }
+    }
+
+    function setText(el, text, cls = "") {
+      el.textContent = text;
+      el.className = cls;
+    }
+
+    function normLabel(s) {
+      return (s || "").toLowerCase().trim();
+    }
+
+    /** 긴 힌트일수록 우선(더 구체적 매칭) */
+    function pickBrowserMicInput(inputs) {
+      const sortedHints = [...MIC_LABEL_HINTS].sort((a, b) => b.length - a.length);
+      for (const hint of sortedHints) {
+        const h = hint.toLowerCase();
+        const hit = inputs.find(d => normLabel(d.label).includes(h));
+        if (hit) return hit;
+      }
+      return null;
+    }
+
+    async function checkBrowserMicPermission() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter(d => d.kind === "audioinput");
+        const target = pickBrowserMicInput(inputs);
+        if (!target) {
+          forcedMicDeviceId = null;
+          const listed = inputs.length
+            ? inputs.map((d, i) => `[${i}] ${d.label || "(이름 없음 — 브라우저가 숨김)"}`).join(" · ")
+            : "(오디오 입력 0개)";
+          setText(
+            micStatus,
+            "브라우저 권한 OK. 이 탭을 연 기기(예: 맥)의 마이크 목록입니다. Pi USB 마이크는 여기 안 보이는 것이 정상입니다. Pi 마이크 녹음은 「서버에서 녹음」을 선택하세요.",
+            "warn"
+          );
+          setText(selectedMic, `브라우저 측 입력: ${listed}`, "err");
+          return;
+        }
+        forcedMicDeviceId = target.deviceId;
+        setText(micStatus, `브라우저 마이크 권한 OK (고정: ${target.label})`, "ok");
+        setText(selectedMic, `사용 고정 마이크: ${target.label}`, "ok");
+      } catch (e) {
+        forcedMicDeviceId = null;
+        setText(micStatus, "브라우저 마이크 권한 실패: " + e.message, "err");
+        setText(selectedMic, "사용 고정 마이크: (미확인)", "warn");
+      }
+    }
+
+    async function checkServerMicDevices() {
+      try {
+        const res = await fetch("/api/mic/devices");
+        const data = await res.json();
+        if (!data.ok) throw new Error("장치 조회 실패");
+        deviceList.innerHTML = "";
+        if (!data.devices.length) {
+          const li = document.createElement("li");
+          li.textContent = "입력 장치가 없습니다.";
+          deviceList.appendChild(li);
+          setText(micStatus, "STT 서버에 입력 장치 없음", "warn");
+          return;
+        }
+        serverDeviceSelect.innerHTML = '<option value="">자동 · 이름에 lavalier 우선</option>';
+        data.devices.forEach(d => {
+          const li = document.createElement("li");
+          li.textContent = `[${d.index}] ${d.name} / ch=${d.max_input_channels}, sr=${Math.round(d.default_samplerate)}`;
+          deviceList.appendChild(li);
+          const opt = document.createElement("option");
+          opt.value = String(d.index);
+          opt.textContent = `[${d.index}] ${d.name}`;
+          serverDeviceSelect.appendChild(opt);
+        });
+        setText(micStatus, `STT 서버 입력 장치 ${data.count}개 인식 (아래 불릿 = 서버 측)`, "ok");
+      } catch (e) {
+        setText(micStatus, "STT 서버 장치 조회 실패: " + e.message, "err");
+      }
+    }
+
+    async function startRecording() {
+      try {
+        setText(recStatus, "세션 생성 중...", "muted");
+        emotion.textContent = "-";
+        neoStatus.textContent = "";
+        neoStatus.className = "muted";
+        transcript.textContent = "";
+        isStopping = false;
+        recordedChunks = [];
+
+        const startRes = await fetch("/api/session/start", { method: "POST" });
+        const startData = await startRes.json();
+        sessionId = startData.session_id;
+
+        if (getRecMode() === "server") {
+          const body = {};
+          const sel = serverDeviceSelect.value;
+          if (sel !== "") body.device_index = parseInt(sel, 10);
+          const srRes = await fetch(`/api/session/${sessionId}/server-record/start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!srRes.ok) {
+            const err = await srRes.json().catch(() => ({}));
+            const d = err.detail;
+            const msg = typeof d === "string" ? d : Array.isArray(d) ? d.map(x => x.msg || x).join("; ") : srRes.statusText;
+            throw new Error(msg || "서버 녹음 시작 실패");
+          }
+          const srData = await srRes.json();
+          setText(
+            selectedMic,
+            `서버 녹음 중: [${srData.device_index}] ${srData.device_name || ""} @ ${Math.round(srData.samplerate)} Hz`,
+            "ok"
+          );
+          transcript.textContent = "(녹음 중 — 전사·감정은 종료 버튼 후 한 번에 처리됩니다)";
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+          setText(recStatus, "녹음 중… (서버 마이크) 종료 시 Whisper·감정 분류가 이어집니다.", "ok");
+          return;
+        }
+
+        if (!forcedMicDeviceId) {
+          await checkBrowserMicPermission();
+        }
+        if (!forcedMicDeviceId) {
+          throw new Error(
+            "브라우저에서 라발리에 USB를 고정할 수 없습니다. Pi USB 마이크는 「서버에서 녹음」을 선택하거나, 브라우저를 Pi에서 열어 주세요."
+          );
+        }
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: forcedMicDeviceId } }
+        });
+        const opts = {};
+        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+          opts.mimeType = "audio/webm;codecs=opus";
+        }
+        mediaRecorder = new MediaRecorder(mediaStream, opts);
+        recorderMime = mediaRecorder.mimeType || "audio/webm";
+
+        mediaRecorder.ondataavailable = async (ev) => {
+          if (!ev.data || ev.data.size === 0 || !sessionId) return;
+          recordedChunks.push(ev.data);
+          const liveBlob = new Blob(recordedChunks, { type: recorderMime });
+          const fd = new FormData();
+          fd.append("audio", liveBlob, "chunk.webm");
+          try {
+            const res = await fetch(`/api/session/${sessionId}/chunk`, { method: "POST", body: fd });
+            const data = await res.json();
+            if (data.full_text) {
+              transcript.textContent = data.full_text || transcript.textContent;
+              setText(recStatus, "녹음 중... 실시간 STT 반영 중", "ok");
+            }
+          } catch (_) {
+            // chunk 실패는 다음 chunk에서 복구 시도
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          mediaStream?.getTracks().forEach(t => t.stop());
+          mediaStream = null;
+          mediaRecorder = null;
+          if (!sessionId || !isStopping) return;
+          try {
+            setText(recStatus, "감정 분류 중...", "muted");
+            const finalBlob = new Blob(recordedChunks, { type: recorderMime });
+            const fd = new FormData();
+            fd.append("audio", finalBlob, "final.webm");
+            const res = await fetch(`/api/session/${sessionId}/finish`, { method: "POST", body: fd });
+            const data = await res.json();
+            transcript.textContent = data.text || transcript.textContent;
+            applyEmotionNeoResponse(data);
+            setText(recStatus, "완료", "ok");
+          } catch (e) {
+            setText(recStatus, "종료 처리 실패: " + e.message, "err");
+          } finally {
+            sessionId = null;
+            recordedChunks = [];
+            btnStart.disabled = false;
+            btnStop.disabled = true;
+          }
+        };
+
+        mediaRecorder.start(1200); // 1.2초마다 누적 오디오 업로드 (실시간 반응성 향상)
+        btnStart.disabled = true;
+        btnStop.disabled = false;
+        setText(recStatus, "녹음 중... 말해보세요.", "ok");
+      } catch (e) {
+        setText(recStatus, "녹음 시작 실패: " + e.message, "err");
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+      }
+    }
+
+    async function stopRecording() {
+      if (getRecMode() === "server") {
+        if (!sessionId) return;
+        setText(recStatus, "녹음 종료 · Whisper 전사 및 감정 분류 중… (첫 실행은 모델 로딩으로 1~2분 걸릴 수 있음)", "muted");
+        btnStop.disabled = true;
+        try {
+          const res = await fetch(`/api/session/${sessionId}/server-record/finish`, { method: "POST" });
+          const data = await res.json();
+          if (!res.ok) {
+            const d = data.detail;
+            const msg = typeof d === "string" ? d : Array.isArray(d) ? d.map(x => x.msg || x).join("; ") : res.statusText;
+            throw new Error(msg || "finish 실패");
+          }
+          transcript.textContent = data.text || transcript.textContent;
+          applyEmotionNeoResponse(data);
+          setText(recStatus, "완료", "ok");
+        } catch (e) {
+          setText(recStatus, "종료 처리 실패: " + e.message, "err");
+        } finally {
+          sessionId = null;
+          btnStart.disabled = false;
+          btnStop.disabled = true;
+        }
+        return;
+      }
+
+      if (!mediaRecorder) return;
+      isStopping = true;
+      setText(recStatus, "녹음 종료 중...", "muted");
+      btnStop.disabled = true;
+      mediaRecorder.stop();
+    }
+
+    btnBrowserMic.addEventListener("click", checkBrowserMicPermission);
+    btnServerMic.addEventListener("click", checkServerMicDevices);
+    btnStart.addEventListener("click", startRecording);
+    btnStop.addEventListener("click", stopRecording);
+    document.querySelectorAll('input[name="recMode"]').forEach(r => {
+      r.addEventListener("change", () => {
+        if (getRecMode() === "server") {
+          setText(selectedMic, "서버 녹음: 브라우저 마이크 불필요. 위에서 STT 서버 장치를 조회할 수 있습니다.", "muted");
+        } else {
+          setText(selectedMic, "브라우저 녹음: 이 기기 마이크 권한 테스트를 해 주세요.", "muted");
+        }
+      });
+    });
+    loadServerHint();
+    setText(selectedMic, "서버 녹음: 브라우저 마이크 불필요. 위에서 STT 서버 장치를 조회할 수 있습니다.", "muted");
+  </script>
+</body>
+</html>

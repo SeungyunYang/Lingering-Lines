@@ -8,7 +8,7 @@ from typing import Union
 import numpy as np
 import whisper
 
-from config import WHISPER_MODEL, LANGUAGE
+from config import LANGUAGE, WHISPER_INITIAL_PROMPT, WHISPER_MODEL
 
 _model = None
 
@@ -39,7 +39,12 @@ def transcribe(audio: Union[bytes, np.ndarray], *, language: str = LANGUAGE) -> 
         return ""
 
     model = get_model()
-    result = model.transcribe(audio, language=language if language else None, fp16=False)
+    kw: dict = {"fp16": False, "verbose": False, "task": "transcribe"}
+    if language:
+        kw["language"] = language
+    if WHISPER_INITIAL_PROMPT:
+        kw["initial_prompt"] = WHISPER_INITIAL_PROMPT
+    result = model.transcribe(audio, **kw)
     text = (result.get("text") or "").strip()
     return text
 
